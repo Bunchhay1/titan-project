@@ -1,0 +1,136 @@
+import requests
+import random
+import string
+import json
+import time
+import sys
+
+# ==============================================================================
+# ⚙️ CONFIGURATION (UPDATED FOR LOCALHOST)
+# ==============================================================================
+# ✅ យើងប្តូរទៅ localhost ព្រោះ Docker កំពុងរត់លើម៉ាស៊ីនរបស់អ្នក
+BASE_URL = "https://jefferson-requirement-photographic-members.trycloudflare.com/api/v1" # Gateway Port
+
+HEADERS = {"Content-Type": "application/json"}
+
+class Colors:
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    BLUE = '\033[94m'
+    RESET = '\033[0m'
+
+# ==============================================================================
+# 🛠️ HELPER FUNCTIONS
+# ==============================================================================
+def random_string(length=8):
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+
+def print_status(method, endpoint, status, time_taken):
+    color = Colors.GREEN if 200 <= status < 300 else Colors.RED
+    print(f"{Colors.BLUE}[{method}]{Colors.RESET} {endpoint} -> {color}{status}{Colors.RESET} ({time_taken:.2f}s)")
+
+# ==============================================================================
+# 🚀 CORE TEST LOGIC
+# ==============================================================================
+def run_test_cycle():
+    # 1. GENERATE USER DATA
+    username = f"user_{random_string(5)}"
+    email = f"{username}@titan.com"
+    password = "password123"
+    
+    print(f"\n{Colors.YELLOW}--- 🏁 STARTING TEST CYCLE FOR: {username} ---{Colors.RESET}")
+
+    # ---------------------------------------------------------
+    # STEP 1: REGISTER (បង្កើតគណនីថ្មី)
+    # ---------------------------------------------------------
+    register_url = f"{BASE_URL}/auth/register"
+    register_data = {
+        "firstname": "Titan",
+        "lastname": "Tester",
+        "email": email,
+        "password": password
+    }
+    
+    try:
+        start = time.time()
+        res = requests.post(register_url, json=register_data, headers=HEADERS)
+        duration = time.time() - start
+        print_status("POST", "/auth/register", res.status_code, duration)
+
+        if res.status_code != 200 and res.status_code != 201:
+            print(f"{Colors.RED}❌ Register Failed: {res.text}{Colors.RESET}")
+            return
+    except Exception as e:
+        print(f"{Colors.RED}❌ Error connecting to Gateway: {e}{Colors.RESET}")
+        return
+
+    # ---------------------------------------------------------
+    # STEP 2: LOGIN (ចូលប្រើប្រាស់ដើម្បីយក Token)
+    # ---------------------------------------------------------
+    login_url = f"{BASE_URL}/auth/authenticate" # ឬ /auth/login អាស្រ័យលើ Code Java
+    login_data = {
+        "email": email,
+        "password": password
+    }
+
+    token = None
+    try:
+        start = time.time()
+        res = requests.post(login_url, json=login_data, headers=HEADERS)
+        duration = time.time() - start
+        print_status("POST", "/auth/authenticate", res.status_code, duration)
+
+        if res.status_code == 200:
+            data = res.json()
+            # ស្វែងរក Token ក្នុង Response (ឈ្មោះអាចជា access_token ឬ token)
+            token = data.get("access_token") or data.get("token")
+            print(f"{Colors.GREEN}✅ Login Success! Token acquired.{Colors.RESET}")
+        else:
+            print(f"{Colors.RED}❌ Login Failed: {res.text}{Colors.RESET}")
+            return
+    except Exception as e:
+        print(f"Error: {e}")
+        return
+
+    # ---------------------------------------------------------
+    # STEP 3: PROTECTED REQUEST (ប្រើ Token ដើម្បីហៅ API)
+    # ---------------------------------------------------------
+    if token:
+        # បង្កើត Header ថ្មីដែលមាន Token
+        auth_headers = HEADERS.copy()
+        auth_headers["Authorization"] = f"Bearer {token}"
+
+        # សាកល្បងបង្កើតគណនីធនាគារ (Create Bank Account)
+        create_acc_url = f"{BASE_URL}/accounts"
+        acc_data = {
+            "accountType": "SAVINGS",
+            "initialDeposit": random.randint(100, 5000)
+        }
+
+        start = time.time()
+        res = requests.post(create_acc_url, json=acc_data, headers=auth_headers)
+        duration = time.time() - start
+        print_status("POST", "/accounts", res.status_code, duration)
+
+        if res.status_code in [200, 201]:
+             print(f"{Colors.CYAN}🎉 Account Created Successfully!{Colors.RESET}")
+        else:
+             print(f"{Colors.RED}❌ Failed to create account: {res.text}{Colors.RESET}")
+
+# ==============================================================================
+# 🔄 MAIN EXECUTION
+# ==============================================================================
+if __name__ == "__main__":
+    print(f"{Colors.CYAN}🚀 TITAN SYSTEM TESTER LAUNCHED{Colors.RESET}")
+    print(f"Target: {BASE_URL}\n")
+    
+    # សួរថាតើចង់ Run ប៉ុន្មានដង?
+    try:
+        count = int(input("How many users do you want to simulate? (Default 1): ") or 1)
+    except:
+        count = 1
+
+    for i in range(count):
+        run_test_cycle()
+        time.sleep(1) # សម្រាក 1 វិនាទីរវាង User ម្នាក់ៗ

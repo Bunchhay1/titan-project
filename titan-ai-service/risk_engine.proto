@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+// កញ្ចប់សម្រាប់ Java (កុំខ្វល់ពេលនៅ Python, តែសំខាន់សម្រាប់ Java)
+option java_package = "com.titan.core.grpc";
+option java_multiple_files = true;
+
+service RiskEngine {
+  // សេវាកម្មសម្រាប់ពិនិត្យហានិភ័យ
+  rpc CheckRisk (RiskRequest) returns (RiskResponse) {};
+}
+
+message RiskRequest {
+  string username = 1;
+  double amount = 2;
+}
+
+message RiskResponse {
+  string risk_level = 1; // "HIGH", "LOW"
+  string action = 2;     // "BLOCK", "ALLOW"
+}

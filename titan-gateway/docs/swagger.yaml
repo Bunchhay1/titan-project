@@ -1,0 +1,45 @@
+basePath: /
+host: rabbit-das-trusted-trading.trycloudflare.com
+info:
+  contact: {}
+  description: API Gateway for Titan System.
+  title: Titan Core Banking API
+  version: "1.0"
+paths:
+  /api/v1/demo:
+    get:
+      consumes:
+      - application/json
+      description: This is a fake endpoint to show on Swagger.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Test Transaction API
+      tags:
+      - Transactions
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Check if the gateway is running.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Show Gateway Health
+      tags:
+      - System
+schemes:
+- https
+swagger: "2.0"
