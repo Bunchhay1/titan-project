@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class RiskEngineStub(object):
+class RiskEngineServiceStub(object):
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -35,13 +35,13 @@ class RiskEngineStub(object):
             channel: A grpc.Channel.
         """
         self.CheckRisk = channel.unary_unary(
-                '/RiskEngine/CheckRisk',
-                request_serializer=risk__engine__pb2.RiskRequest.SerializeToString,
-                response_deserializer=risk__engine__pb2.RiskResponse.FromString,
+                '/risk_engine.RiskEngineService/CheckRisk',
+                request_serializer=risk__engine__pb2.RiskCheckRequest.SerializeToString,
+                response_deserializer=risk__engine__pb2.RiskCheckResponse.FromString,
                 _registered_method=True)
 
 
-class RiskEngineServicer(object):
+class RiskEngineServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def CheckRisk(self, request, context):
@@ -51,22 +51,22 @@ class RiskEngineServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
-def add_RiskEngineServicer_to_server(servicer, server):
+def add_RiskEngineServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'CheckRisk': grpc.unary_unary_rpc_method_handler(
                     servicer.CheckRisk,
-                    request_deserializer=risk__engine__pb2.RiskRequest.FromString,
-                    response_serializer=risk__engine__pb2.RiskResponse.SerializeToString,
+                    request_deserializer=risk__engine__pb2.RiskCheckRequest.FromString,
+                    response_serializer=risk__engine__pb2.RiskCheckResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'RiskEngine', rpc_method_handlers)
+            'risk_engine.RiskEngineService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('RiskEngine', rpc_method_handlers)
+    server.add_registered_method_handlers('risk_engine.RiskEngineService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class RiskEngine(object):
+class RiskEngineService(object):
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -83,9 +83,9 @@ class RiskEngine(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/RiskEngine/CheckRisk',
-            risk__engine__pb2.RiskRequest.SerializeToString,
-            risk__engine__pb2.RiskResponse.FromString,
+            '/risk_engine.RiskEngineService/CheckRisk',
+            risk__engine__pb2.RiskCheckRequest.SerializeToString,
+            risk__engine__pb2.RiskCheckResponse.FromString,
             options,
             channel_credentials,
             insecure,

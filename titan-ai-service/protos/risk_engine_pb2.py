@@ -24,18 +24,18 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11risk_engine.proto\"/\n\x0bRiskRequest\x12\x10\n\x08username\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x01\"2\n\x0cRiskResponse\x12\x12\n\nrisk_level\x18\x01 \x01(\t\x12\x0e\n\x06\x61\x63tion\x18\x02 \x01(\t28\n\nRiskEngine\x12*\n\tCheckRisk\x12\x0c.RiskRequest\x1a\r.RiskResponse\"\x00\x42\x17\n\x13\x63om.titan.core.grpcP\x01\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x11risk_engine.proto\x12\x0brisk_engine\"3\n\x10RiskCheckRequest\x12\x0f\n\x07user_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61mount\x18\x02 \x01(\x01\"K\n\x11RiskCheckResponse\x12\x12\n\nrisk_score\x18\x01 \x01(\x05\x12\x12\n\nrisk_level\x18\x02 \x01(\t\x12\x0e\n\x06\x61\x63tion\x18\x03 \x01(\t2_\n\x11RiskEngineService\x12J\n\tCheckRisk\x12\x1d.risk_engine.RiskCheckRequest\x1a\x1e.risk_engine.RiskCheckResponseB\x18\n\x14\x63om.titan.riskengineP\x01\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'risk_engine_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
-  _globals['DESCRIPTOR']._serialized_options = b'\n\023com.titan.core.grpcP\001'
-  _globals['_RISKREQUEST']._serialized_start=21
-  _globals['_RISKREQUEST']._serialized_end=68
-  _globals['_RISKRESPONSE']._serialized_start=70
-  _globals['_RISKRESPONSE']._serialized_end=120
-  _globals['_RISKENGINE']._serialized_start=122
-  _globals['_RISKENGINE']._serialized_end=178
+  _globals['DESCRIPTOR']._serialized_options = b'\n\024com.titan.riskengineP\001'
+  _globals['_RISKCHECKREQUEST']._serialized_start=34
+  _globals['_RISKCHECKREQUEST']._serialized_end=85
+  _globals['_RISKCHECKRESPONSE']._serialized_start=87
+  _globals['_RISKCHECKRESPONSE']._serialized_end=162
+  _globals['_RISKENGINESERVICE']._serialized_start=164
+  _globals['_RISKENGINESERVICE']._serialized_end=259
 # @@protoc_insertion_point(module_scope)

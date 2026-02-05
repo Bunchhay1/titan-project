@@ -1,6 +1,0 @@
-{
-    "python.analysis.extraPaths": [
-        "./protos"
-    ],
-    "python.venvPath": "venv"
-}       
