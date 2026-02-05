@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  # ✅ Database for Core Banking
+  postgres:
+    image: postgres:15
+    container_name: titan_db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=titan-db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  # ✅ Redis for Caching & OTP
+  redis:
+    image: redis:7.0
+    container_name: titan_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+volumes:
+  postgres_data:
