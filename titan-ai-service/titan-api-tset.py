@@ -1,136 +1,157 @@
 import requests
-import random
-import string
+import uuid
 import json
-import time
 import sys
+import time
 
-# ==============================================================================
-# ⚙️ CONFIGURATION (UPDATED FOR LOCALHOST)
-# ==============================================================================
-# ✅ យើងប្តូរទៅ localhost ព្រោះ Docker កំពុងរត់លើម៉ាស៊ីនរបស់អ្នក
-BASE_URL = "https://jefferson-requirement-photographic-members.trycloudflare.com/api/v1" # Gateway Port
-
+# ==========================================
+# ⚙️ CONFIGURATION (TARGET: SERVER IP)
+# ==========================================
+BASE_URL = "hhttp://192.168.0.120:8080"  # Gateway Port
 HEADERS = {"Content-Type": "application/json"}
 
-class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    RESET = '\033[0m'
+# ពណ៌សម្រាប់មើលងាយស្រួល
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
 
-# ==============================================================================
-# 🛠️ HELPER FUNCTIONS
-# ==============================================================================
-def random_string(length=8):
-    return ''.join(random.choices(string.ascii_letters + string.digits, k=length))
+def log(message, color=RESET):
+    print(f"{color}{message}{RESET}")
 
-def print_status(method, endpoint, status, time_taken):
-    color = Colors.GREEN if 200 <= status < 300 else Colors.RED
-    print(f"{Colors.BLUE}[{method}]{Colors.RESET} {endpoint} -> {color}{status}{Colors.RESET} ({time_taken:.2f}s)")
+# ==========================================
+# 1. 🏥 HEALTH CHECK
+# ==========================================
+def check_health():
+    url = f"{BASE_URL}/actuator/health"
+    log(f"--- 🏥 Checking System Health at {url} ---", YELLOW)
+    try:
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        
+        status = data.get("status", "UNKNOWN")
+        redis_status = data.get("components", {}).get("redis", {}).get("status", "UNKNOWN")
+        db_status = data.get("components", {}).get("db", {}).get("status", "UNKNOWN")
 
-# ==============================================================================
-# 🚀 CORE TEST LOGIC
-# ==============================================================================
-def run_test_cycle():
-    # 1. GENERATE USER DATA
-    username = f"user_{random_string(5)}"
+        if status == "UP":
+            log(f"✅ SYSTEM: UP | DB: {db_status} | REDIS: {redis_status}", GREEN)
+            return True
+        else:
+            log(f"❌ SYSTEM UNSTABLE: {json.dumps(data, indent=2)}", RED)
+            # បើ Redis នៅ Down យើងព្រមាន តែនៅតែសាកល្បងទៅមុខ
+            if redis_status == "DOWN":
+                log("⚠️ WARNING: Redis is DOWN! Titan Core might fail to cache.", RED)
+            return True # ដាក់ True ដើម្បីបង្ខំតេស្តបន្ត
+    except Exception as e:
+        log(f"❌ CONNECTION FAILED: {str(e)}", RED)
+        log("💡 Hint: Check VPN, Wifi, or run 'ufw allow 8080' on server.", YELLOW)
+        return False
+
+# ==========================================
+# 2. 📝 REGISTER USER
+# ==========================================
+def register_user():
+    # បង្កើតឈ្មោះចៃដន្យរាល់ដង ដើម្បីកុំឱ្យជាន់គ្នា
+    random_id = str(uuid.uuid4())[:8]
+    username = f"user_{random_id}"
     email = f"{username}@titan.com"
     password = "password123"
     
-    print(f"\n{Colors.YELLOW}--- 🏁 STARTING TEST CYCLE FOR: {username} ---{Colors.RESET}")
-
-    # ---------------------------------------------------------
-    # STEP 1: REGISTER (បង្កើតគណនីថ្មី)
-    # ---------------------------------------------------------
-    register_url = f"{BASE_URL}/auth/register"
-    register_data = {
-        "firstname": "Titan",
-        "lastname": "Tester",
+    url = f"{BASE_URL}/auth/register"
+    payload = {
+        "username": username,
         "email": email,
+        "password": password,
+        "fullName": "Titan Commander",
+        "pin": "123456"
+    }
+    
+    log(f"\n--- 📝 Registering User: {username} ---", YELLOW)
+    try:
+        response = requests.post(url, json=payload, headers=HEADERS, timeout=10)
+        if response.status_code in [200, 201]:
+            log(f"✅ Registration Success! ID: {response.json().get('id')}", GREEN)
+            return username, password
+        else:
+            log(f"❌ Register Failed: {response.status_code} - {response.text}", RED)
+            return None, None
+    except Exception as e:
+        log(f"❌ Register Error: {str(e)}", RED)
+        return None, None
+
+# ==========================================
+# 3. 🔐 LOGIN USER
+# ==========================================
+def login_user(username, password):
+    url = f"{BASE_URL}/auth/login"
+    payload = {
+        "username": username,
         "password": password
     }
     
+    log(f"\n--- 🔐 Logging in... ---", YELLOW)
     try:
-        start = time.time()
-        res = requests.post(register_url, json=register_data, headers=HEADERS)
-        duration = time.time() - start
-        print_status("POST", "/auth/register", res.status_code, duration)
-
-        if res.status_code != 200 and res.status_code != 201:
-            print(f"{Colors.RED}❌ Register Failed: {res.text}{Colors.RESET}")
-            return
+        response = requests.post(url, json=payload, headers=HEADERS, timeout=10)
+        if response.status_code == 200:
+            token = response.json().get("token")
+            log(f"✅ Login Success! Token acquired.", GREEN)
+            return token
+        else:
+            log(f"❌ Login Failed: {response.status_code} - {response.text}", RED)
+            return None
     except Exception as e:
-        print(f"{Colors.RED}❌ Error connecting to Gateway: {e}{Colors.RESET}")
-        return
+        log(f"❌ Login Error: {str(e)}", RED)
+        return None
 
-    # ---------------------------------------------------------
-    # STEP 2: LOGIN (ចូលប្រើប្រាស់ដើម្បីយក Token)
-    # ---------------------------------------------------------
-    login_url = f"{BASE_URL}/auth/authenticate" # ឬ /auth/login អាស្រ័យលើ Code Java
-    login_data = {
-        "email": email,
-        "password": password
-    }
-
-    token = None
+# ==========================================
+# 4. 💰 CHECK BALANCE (Protected Route)
+# ==========================================
+# ==========================================
+# 4. 💰 CHECK BALANCE (Protected Route)
+# ==========================================
+def check_balance(token):
+    # ❌ ពីមុន (ខុស):
+    # url = f"{BASE_URL}/accounts"
+    
+    # ✅ កែទៅជា (ត្រូវ): ថែម /api នៅខាងមុខ
+    url = f"{BASE_URL}/api/accounts" 
+    
+    auth_headers = HEADERS.copy()
+    auth_headers["Authorization"] = f"Bearer {token}"
+    
+    log(f"\n--- 💰 Checking Account Balance... ---", YELLOW)
     try:
-        start = time.time()
-        res = requests.post(login_url, json=login_data, headers=HEADERS)
-        duration = time.time() - start
-        print_status("POST", "/auth/authenticate", res.status_code, duration)
-
-        if res.status_code == 200:
-            data = res.json()
-            # ស្វែងរក Token ក្នុង Response (ឈ្មោះអាចជា access_token ឬ token)
-            token = data.get("access_token") or data.get("token")
-            print(f"{Colors.GREEN}✅ Login Success! Token acquired.{Colors.RESET}")
+        response = requests.get(url, headers=auth_headers, timeout=10)
+        # ... (កូដនៅសល់ទុកដដែល)
+        response = requests.get(url, headers=auth_headers, timeout=10)
+        if response.status_code == 200:
+            accounts = response.json()
+            if accounts:
+                log(f"✅ Access Granted! Found {len(accounts)} accounts.", GREEN)
+                for acc in accounts:
+                    log(f"   🏦 Account: {acc.get('accountNumber')} | Balance: ${acc.get('balance')}", GREEN)
+            else:
+                log(f"✅ Access Granted but no accounts found (create one via API).", GREEN)
         else:
-            print(f"{Colors.RED}❌ Login Failed: {res.text}{Colors.RESET}")
-            return
+            log(f"❌ Balance Check Failed: {response.status_code} - {response.text}", RED)
     except Exception as e:
-        print(f"Error: {e}")
-        return
+        log(f"❌ Balance Error: {str(e)}", RED)
 
-    # ---------------------------------------------------------
-    # STEP 3: PROTECTED REQUEST (ប្រើ Token ដើម្បីហៅ API)
-    # ---------------------------------------------------------
-    if token:
-        # បង្កើត Header ថ្មីដែលមាន Token
-        auth_headers = HEADERS.copy()
-        auth_headers["Authorization"] = f"Bearer {token}"
-
-        # សាកល្បងបង្កើតគណនីធនាគារ (Create Bank Account)
-        create_acc_url = f"{BASE_URL}/accounts"
-        acc_data = {
-            "accountType": "SAVINGS",
-            "initialDeposit": random.randint(100, 5000)
-        }
-
-        start = time.time()
-        res = requests.post(create_acc_url, json=acc_data, headers=auth_headers)
-        duration = time.time() - start
-        print_status("POST", "/accounts", res.status_code, duration)
-
-        if res.status_code in [200, 201]:
-             print(f"{Colors.CYAN}🎉 Account Created Successfully!{Colors.RESET}")
-        else:
-             print(f"{Colors.RED}❌ Failed to create account: {res.text}{Colors.RESET}")
-
-# ==============================================================================
-# 🔄 MAIN EXECUTION
-# ==============================================================================
+# ==========================================
+# 🚀 MAIN EXECUTION
+# ==========================================
 if __name__ == "__main__":
-    print(f"{Colors.CYAN}🚀 TITAN SYSTEM TESTER LAUNCHED{Colors.RESET}")
-    print(f"Target: {BASE_URL}\n")
+    log("🚀 STARTING TITAN AUTOMATION TEST\n=================================", YELLOW)
     
-    # សួរថាតើចង់ Run ប៉ុន្មានដង?
-    try:
-        count = int(input("How many users do you want to simulate? (Default 1): ") or 1)
-    except:
-        count = 1
-
-    for i in range(count):
-        run_test_cycle()
-        time.sleep(1) # សម្រាក 1 វិនាទីរវាង User ម្នាក់ៗ
+    # 1. Check Health
+    if check_health():
+        # 2. Register
+        user, pwd = register_user()
+        if user:
+            # 3. Login
+            token = login_user(user, pwd)
+            if token:
+                # 4. Check Balance
+                check_balance(token)
+    
+    log("\n=================================\n🏁 TEST COMPLETED", YELLOW)

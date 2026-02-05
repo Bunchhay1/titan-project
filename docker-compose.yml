@@ -1,113 +1,57 @@
-services:
-  # =========================================
-  # 🐹 1. TITAN GATEWAY (Golang)
-  # =========================================
-  titan-gateway:
-    build: ./titan-gateway
-    container_name: titan-gateway
-    ports:
-      - "8000:8000"
-    environment:
-      - TARGET_CORE_URL=http://titan-core:8080
-      - PORT=8000
-    depends_on:
-      - titan-core
-    networks:
-      - titan-network
-    restart: always
+version: '3.8'
 
-  # =========================================
-  # ☕ 2. TITAN CORE BANKING (Java)
-  # =========================================
-  titan-core:
-    build: ./titan-core-banking
-    container_name: titan-core
-    ports:
-      - "8081:8080"
-    environment:
-      - SPRING_DATASOURCE_URL=jdbc:postgresql://postgres-db:5432/titandb
-      - SPRING_DATASOURCE_USERNAME=postgres
-      - SPRING_DATASOURCE_PASSWORD=mysecretpassword
-      - SPRING_DATA_REDIS_HOST=redis-cache
-      - SPRING_DATA_REDIS_PORT=6379
-      - AI_HOST=titan-ai
-      - AI_PORT=50051
-    depends_on:
-      - postgres-db
-      - redis-cache
-      - titan-ai
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    networks:
-      - titan-network
-    restart: on-failure
-  # =========================================
-  # 🐍 3. TITAN AI ENGINE (Python)
-  # =========================================
+services:
+  # 🧠 Python AI Service
   titan-ai:
+    image: titan-ai
     build: ./titan-ai-service
     container_name: titan-ai
     ports:
-      - "50051:50051"
+      - "50051:50051" # Maps to localhost:50051
     networks:
       - titan-network
-    restart: always
+    restart: on-failure
 
-  # =========================================
-  # 🗄️ 4. INFRASTRUCTURE (DB & Cache)
-  # =========================================
+  # 🗄️ Database (PostgreSQL)
   postgres-db:
     image: postgres:15-alpine
     container_name: titan-db-prod
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=mysecretpassword
-      - POSTGRES_DB=titandb
+      # ✅ MATCHES YOUR CONFIG: spring.datasource.password=mysecretpassword
+      - POSTGRES_PASSWORD=TitanDB$ecure2026_X9z!Lp
+      # ✅ MATCHES YOUR CONFIG: spring.datasource.url=.../titandb
+      - POSTGRES_DB=titandb 
+    ports:
+      - "5432:5432" # Maps to localhost:5432
     volumes:
       - titan_db_data:/var/lib/postgresql/data
     networks:
       - titan-network
     restart: always
 
+  # ⚡ Redis Cache
   redis-cache:
     image: redis:alpine
     container_name: titan-redis-prod
-    networks:
-      - titan-network
-    restart: always
-
-  # =========================================
-  # 📊 5. OBSERVABILITY STACK
-  # =========================================
-  titan-prometheus:
-    image: prom/prometheus:latest
-    container_name: titan-prometheus
     ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - "6379:6379" # Maps to localhost:6379
     networks:
       - titan-network
     restart: always
 
-  titan-grafana:
-    image: grafana/grafana:latest
-    container_name: titan-grafana
+  # 🕵️ Zipkin (Tracing)
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: titan-zipkin
     ports:
-      - "3000:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - "9411:9411"
     networks:
       - titan-network
-    restart: always
 
-# 🌐 NETWORK DEFINITION
 networks:
   titan-network:
     driver: bridge
-    driver_opts:
-      com.docker.network.driver.mtu: "1350"  #
-# 💾 VOLUME DEFINITION
+
 volumes:
   titan_db_data:

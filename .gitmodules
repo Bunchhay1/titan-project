@@ -1,0 +1,3 @@
+[submodule "titan-core-banking"]
+	path = titan-core-banking
+	url = https://github.com/bunchhay1/titan-core-banking.git

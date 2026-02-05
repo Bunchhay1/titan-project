@@ -9,7 +9,7 @@ import sys
 # ⚙️ CONFIGURATION (UPDATED FOR LOCALHOST)
 # ==============================================================================
 # ✅ យើងប្តូរទៅ localhost ព្រោះ Docker កំពុងរត់លើម៉ាស៊ីនរបស់អ្នក
-BASE_URL = "http://100.117.33.69:8080" # Gateway Port
+BASE_URL = "rabbit-das-trusted-trading.trycloudflareapi/v1" # Gateway Port
 
 HEADERS = {"Content-Type": "application/json"}
 

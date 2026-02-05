@@ -9,7 +9,19 @@ import time
 # ⚙️ CONFIGURATION (សូមដាក់ Link Cloudflare ថ្មីនៅទីនេះ)
 # ==============================================================================
 # ឧទាហរណ៍: https://cool-name.trycloudflare.com/api/v1
-BASE_URL = "https://jefferson-requirement-photographic-members.trycloudflare.com/api/v1"
+BASE_URL = "https://graph-funny-vbulletin-moral.trycloudflare.com"
+
+# តេស្តហៅ API (ឧទាហរណ៍ Login ឬ Health Check)
+# ត្រូវប្រាកដថា Path (/api/v1/...) ត្រូវនឹង Code Golang របស់លោក
+url = f"{BASE_URL}/api/v1/health"
+
+print(f"📡 Connecting to: {url}...")
+try:
+    response = requests.get(url)
+    print(f"✅ Status: {response.status_code}")
+    print(f"📄 Data: {response.text}")
+except Exception as e:
+    print(f"❌ Error: {e}")
 
 HEADERS = {"Content-Type": "application/json"}
 

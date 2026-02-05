@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # ==========================================
+  # 🗄️ DATABASE (PostgreSQL)
+  # ==========================================
+  titan-db:
+    image: postgres:15-alpine
+    container_name: titan-db-local
+    environment:
+      - POSTGRES_USER=postgres
+      # ✅ FIX: ដូរមក password ឱ្យដូច Java
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=titandb
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # ✅ OPTIONAL: ដាក់ Volume ដើម្បីកុំឱ្យបាត់ទិន្នន័យពេល Restart
+    # volumes:
+    #   - titan_db_data:/var/lib/postgresql/data
+
+  # ==========================================
+  # ⚡ CACHE (Redis)
+  # ==========================================
+  titan-cache:
+    image: redis:alpine
+    container_name: titan-cache-local
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  # ==========================================
+  # ☕ TITAN CORE (Java) -> Calls Mac for AI
+  # ==========================================
+  titan-core:
+    build: 
+      context: ./titan-core-banking
+      dockerfile: Dockerfile
+    container_name: titan-core-local
+    ports:
+      - "8080:8080"
+    environment:
+      # 👇 Connects to 'titan-db-local' (Container Name)
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://titan-db-local:5432/titandb
+      - SPRING_DATASOURCE_USERNAME=postgres
+      # ✅ FIX: ត្រូវគ្នាជាមួយ DB ខាងលើហើយ
+      - SPRING_DATASOURCE_PASSWORD=password
+      
+      # 👇 Connects to 'titan-cache-local' (Container Name)
+      - SPRING_DATA_REDIS_HOST=titan-cache-local
+      - SPRING_DATA_REDIS_PORT=6379
+      
+      # 👇 Hybrid Mode (Calls Host Python)
+      - GRPC_CLIENT_RISKENGINECLIENT_ADDRESS=static://host.docker.internal:50051
+      - GRPC_CLIENT_RISKENGINECLIENT_NEGOTIATIONTYPE=PLAINTEXT
+      - AI_HOST=host.docker.internal
+      - AI_PORT=50051
+
+    depends_on:
+      titan-db:
+        condition: service_healthy
+      titan-cache:
+        condition: service_healthy
+    
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+  # ==========================================
+  # 🐹 TITAN GATEWAY (Golang) -> Calls Java Core
+  # ==========================================
+  titan-gateway:
+    build: 
+      context: ./titan-gateway
+      dockerfile: Dockerfile
+    container_name: titan-gateway-local
+    ports:
+      - "3000:8000"
+    environment:
+      - PORT=8000
+      
+      # 👇 Connects to 'titan-core-local' (Container Name)
+      - TARGET_CORE_URL=http://titan-core-local:8080
+      
+      # 👇 Connects to Mac for AI (Direct)
+      - AI_SERVICE_URL=http://host.docker.internal:50051
+      
+    depends_on:
+      - titan-core
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: on-failure
+
+# ==========================================
+# 🌐 NETWORK DEFINITION
+# ==========================================
+networks:
+  default:
+    name: titan-network
+    driver: bridge
+
+# volumes:
+#   titan_db_data:

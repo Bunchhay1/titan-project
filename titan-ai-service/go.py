@@ -9,17 +9,22 @@ import sys
 # ⚙️ CONFIGURATION (UPDATED FOR LOCALHOST)
 # ==============================================================================
 # ✅ យើងប្តូរទៅ localhost ព្រោះ Docker កំពុងរត់លើម៉ាស៊ីនរបស់អ្នក
-BASE_URL = "http://100.117.33.69:8080" # Gateway Port
+BASE_URL = "http://100.117.33.69:8080"# Gateway Port
 
 HEADERS = {"Content-Type": "application/json"}
 
 class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
+    HEADER = '\033[95m'
     BLUE = '\033[94m'
+    CYAN = '\033[96m'   # ✅ ដាក់ពណ៌ផ្ទៃមេឃចូល (នេះជាកន្លែងដែល Error)
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m' # ជួនកាលគេប្រើ WARNING, តែដាក់ YELLOW ឱ្យស្រួលហៅ
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    RED = '\033[91m'
     RESET = '\033[0m'
-
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 # ==============================================================================
 # 🛠️ HELPER FUNCTIONS
 # ==============================================================================
@@ -48,8 +53,11 @@ def run_test_cycle():
     register_data = {
         "firstname": "Titan",
         "lastname": "Tester",
+        "username": username,       # <--- ដាក់ចូលវិញ (បងភ្លេចមួយនេះ)
         "email": email,
-        "password": password
+        "password": password,
+        "pin": "123456"
+        
     }
     
     try:
