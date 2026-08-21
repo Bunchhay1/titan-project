@@ -41,8 +41,9 @@ public class TransactionService {
     private final IdempotencyService idempotencyService;
     private final RiskEngineGrpcService riskEngineGrpcService;
     private final DeadMansSwitchService deadMansSwitchService;
-    private final DeviceTokenService deviceTokenService;
-    private final NotificationService notificationService;
+    // NOTE: No NotificationService here. Core-banking publishes events to Kafka
+    // via EventPublisherService → OutboxRelayService. titan-notifications-service
+    // consumes those Kafka events and owns all push/alert delivery.
 
     // ==================================================================================
     // 💸 1. TRANSFER (SECURE ENTERPRISE LOGIC)
@@ -156,29 +157,9 @@ public class TransactionService {
             );
 
             // ✅ FIX 3: Publish to outbox (SAME transaction!)
+            // OutboxRelayService polls every 2 s and forwards to Kafka.
+            // titan-notifications-service consumes the Kafka event and sends the push.
             eventPublisherService.publishTransactionCompletedEvent(tx);
-
-            // 📲 Push notification to sender (Account A)
-            String senderTitle = "Transfer Successful ✅";
-            String senderBody  = String.format("You sent $%.2f to account %s. Ref: %s",
-                    request.amount().doubleValue(),
-                    request.toAccountNumber(),
-                    tx.getIdempotencyKey() != null ? tx.getIdempotencyKey() : String.valueOf(tx.getId()));
-            deviceTokenService.pushToUser(fromAccount.getUser().getId(), senderTitle, senderBody);
-
-            // 📲 Push notification to receiver (Account B)
-            String receiverTitle = "Money Received 💰";
-            String receiverBody  = String.format("You received $%.2f from account %s. Ref: %s",
-                    request.amount().doubleValue(),
-                    request.fromAccountNumber(),
-                    tx.getIdempotencyKey() != null ? tx.getIdempotencyKey() : String.valueOf(tx.getId()));
-            deviceTokenService.pushToUser(toAccount.getUser().getId(), receiverTitle, receiverBody);
-
-            // 📧 HTTP notify → titan-notifications-service (sender)
-            notificationService.notifyTransaction(tx);
-
-            // 📧 HTTP notify → titan-notifications-service (receiver)
-            notificationService.notifyTransactionReceiver(tx);
 
             return tx;
 
@@ -232,8 +213,6 @@ public class TransactionService {
             }
 
             eventPublisherService.publishTransactionCompletedEvent(tx);
-            // 📧 HTTP notify → titan-notifications-service
-            notificationService.notifyTransaction(tx);
             return tx;
 
         } catch (Exception e) {
@@ -280,8 +259,6 @@ public class TransactionService {
         }
 
         eventPublisherService.publishTransactionCompletedEvent(tx);
-        // 📧 HTTP notify → titan-notifications-service
-        notificationService.notifyTransaction(tx);
         return tx;
     }
 

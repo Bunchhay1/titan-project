@@ -36,6 +36,12 @@ public class MultiRegionKafkaConfig {
     @Value("${spring.kafka.consumer.group-id:titan-notifications}")
     private String groupId;
 
+    // "latest" = only process NEW messages after startup (prevents replay on restart).
+    // "earliest" = replay ALL messages from the beginning (useful in dev/test only).
+    // Controlled by spring.kafka.consumer.auto-offset-reset in application-docker.properties.
+    @Value("${spring.kafka.consumer.auto-offset-reset:latest}")
+    private String autoOffsetReset;
+
     // PLAINTEXT (local) or SASL_SSL (Confluent Cloud)
     @Value("${spring.kafka.security.protocol:PLAINTEXT}")
     private String securityProtocol;
@@ -72,7 +78,9 @@ public class MultiRegionKafkaConfig {
         props.put(ConsumerConfig.HEARTBEAT_INTERVAL_MS_CONFIG, 10000);
         props.put(ConsumerConfig.MAX_POLL_INTERVAL_MS_CONFIG, 300000);
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
-        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
+        // "latest" (docker default) = skip old messages on restart → no duplicate pushes.
+        // Controlled by spring.kafka.consumer.auto-offset-reset in application-docker.properties.
+        props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, autoOffsetReset);
 
         // Rack awareness for multi-region (no-op on Confluent Cloud)
         props.put(ConsumerConfig.CLIENT_RACK_CONFIG,

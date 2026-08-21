@@ -29,8 +29,8 @@ public class ShadowRuleEngine {
             
             ShadowEvaluation evaluation = ShadowEvaluation.builder()
                 .ruleId(ruleId)
-                .transactionId(event.getTransactionId())
-                .accountId(event.getAccountId())
+                .transactionId(parseTransactionId(event.getTransactionId()))
+                .accountId(event.getAccountId() != null ? event.getAccountId() : 0L)
                 .matched(matched != null && matched)
                 .theoreticalPayout(matched != null && matched ? rewardAmount : BigDecimal.ZERO)
                 .evaluatedAt(LocalDateTime.now())
@@ -46,5 +46,15 @@ public class ShadowRuleEngine {
     
     public BigDecimal getProjectedCost(Long ruleId) {
         return repository.calculateTotalCost(ruleId);
+    }
+
+    private Long parseTransactionId(String transactionId) {
+        if (transactionId == null || transactionId.isBlank()) return 0L;
+        try {
+            return Long.parseLong(transactionId.split("-")[0]);
+        } catch (NumberFormatException e) {
+            log.warn("Cannot parse transactionId '{}' as Long, using 0", transactionId);
+            return 0L;
+        }
     }
 }

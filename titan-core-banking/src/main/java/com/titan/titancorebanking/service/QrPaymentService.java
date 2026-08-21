@@ -7,6 +7,8 @@ import com.google.zxing.common.BitMatrix;
 import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import com.titan.titancorebanking.dto.request.GenerateQrRequest;
+import com.titan.titancorebanking.dto.request.GeneratePayerQrRequest;
+import com.titan.titancorebanking.dto.request.CollectByQrRequest;
 import com.titan.titancorebanking.dto.request.PayByQrRequest;
 import com.titan.titancorebanking.dto.response.QrPaymentResponse;
 import com.titan.titancorebanking.enums.TransactionStatus;
@@ -206,6 +208,167 @@ public class QrPaymentService {
         log.info("✅ QR payment completed: qrCode={} payer={} payee={} amount={}",
                 request.qrCode(), payer.getAccountNumber(),
                 payee.getAccountNumber(), paymentAmount);
+
+        return toResponse(qrPayment, null);
+    }
+
+    // =============================================================================
+    // 3. GENERATE PAYER QR  (Send by QR — payer pre-authorises a payment)
+    // =============================================================================
+
+    /**
+     * Payer (Account A) generates a QR code pre-authorised with their PIN.
+     * Anyone who scans and calls /collect will receive the money into their account.
+     *
+     * @param request  GeneratePayerQrRequest (payerAccountNumber, amount, pin, note, ttlMinutes)
+     * @param username authenticated user's username
+     * @return QrPaymentResponse including base64 QR image
+     */
+    @Transactional
+    public QrPaymentResponse generatePayerQr(GeneratePayerQrRequest request, String username) {
+        // 1️⃣  Resolve payer account and verify ownership
+        Account payer = accountRepository
+                .findByAccountNumber(request.payerAccountNumber())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Account not found: " + request.payerAccountNumber()));
+
+        if (!payer.getUser().getUsername().equals(username)) {
+            throw new SecurityException("You can only generate QR codes for your own accounts.");
+        }
+
+        // 2️⃣  Validate PIN upfront
+        if (!passwordEncoder.matches(request.pin(), payer.getUser().getPin())) {
+            throw new SecurityException("Invalid PIN.");
+        }
+
+        // 3️⃣  Balance check upfront — reject if insufficient
+        BigDecimal amount = request.amount();
+        if (payer.getBalance().compareTo(amount) < 0) {
+            throw new IllegalStateException("Insufficient balance to generate this QR.");
+        }
+
+        // 4️⃣  Build token and expiry
+        String qrToken = generateUniqueToken();
+        int ttl = (request.ttlMinutes() != null) ? request.ttlMinutes() : DEFAULT_TTL_MIN;
+        LocalDateTime expiresAt = LocalDateTime.now().plusMinutes(ttl);
+
+        // 5️⃣  Persist — payeeAccount is null until someone collects
+        //     We reuse the QrPayment entity but store payer in payeeAccount slot
+        //     and mark it with a special note prefix "PAYER_QR:" to distinguish.
+        //     The real deduction happens at collect time.
+        QrPayment qrPayment = QrPayment.builder()
+                .qrCode(qrToken)
+                .payeeAccount(payer)          // temporarily store payer here
+                .amount(amount)
+                .currency(payer.getCurrency().name())
+                .note("PAYER_QR:" + (request.note() != null ? request.note() : ""))
+                .status(QrStatus.PENDING)
+                .expiresAt(expiresAt)
+                .build();
+
+        qrPaymentRepository.save(qrPayment);
+        log.info("💸 Payer QR generated: token={} payer={} amount={}", qrToken,
+                request.payerAccountNumber(), amount);
+
+        String base64Image = renderQrToBase64(qrToken);
+        return toResponse(qrPayment, base64Image);
+    }
+
+    // =============================================================================
+    // 4. COLLECT BY QR  (Account B scans and receives money)
+    // =============================================================================
+
+    /**
+     * Account B scans Account A's payer QR and pulls the pre-authorised amount
+     * into their own account. No PIN required from B — A already authorised at generate time.
+     *
+     * @param request  CollectByQrRequest (qrCode, collectorAccountNumber)
+     * @param username authenticated user's username (must own collectorAccountNumber)
+     * @return QrPaymentResponse with status COMPLETED
+     */
+    @Transactional
+    public QrPaymentResponse collectByQr(CollectByQrRequest request, String username) {
+        // 1️⃣  Look up QR
+        QrPayment qrPayment = qrPaymentRepository.findByQrCode(request.qrCode())
+                .orElseThrow(() -> new IllegalArgumentException("Invalid QR code."));
+
+        // 2️⃣  Must be a payer-generated QR
+        if (qrPayment.getNote() == null || !qrPayment.getNote().startsWith("PAYER_QR:")) {
+            throw new IllegalArgumentException(
+                    "This QR code is not a Send-by-QR code. Use the pay endpoint instead.");
+        }
+
+        // 3️⃣  Status + expiry checks
+        if (qrPayment.getStatus() == QrStatus.EXPIRED ||
+                LocalDateTime.now().isAfter(qrPayment.getExpiresAt())) {
+            qrPayment.setStatus(QrStatus.EXPIRED);
+            qrPaymentRepository.save(qrPayment);
+            throw new IllegalStateException("QR code has expired.");
+        }
+        if (qrPayment.getStatus() == QrStatus.COMPLETED) {
+            throw new IllegalStateException("QR code has already been collected.");
+        }
+        if (qrPayment.getStatus() == QrStatus.CANCELLED) {
+            throw new IllegalStateException("QR code has been cancelled.");
+        }
+
+        // 4️⃣  Resolve collector account and verify ownership
+        Account collector = accountRepository
+                .findByAccountNumber(request.collectorAccountNumber())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Collector account not found: " + request.collectorAccountNumber()));
+
+        if (!collector.getUser().getUsername().equals(username)) {
+            throw new SecurityException("You can only collect into your own accounts.");
+        }
+
+        // 5️⃣  Payer is stored in payeeAccount (see generatePayerQr)
+        Account payer = qrPayment.getPayeeAccount();
+
+        // 6️⃣  Cannot collect to same account
+        if (payer.getAccountNumber().equals(collector.getAccountNumber())) {
+            throw new IllegalArgumentException("You cannot collect a QR into the same account.");
+        }
+
+        // 7️⃣  Re-check balance (may have changed since QR was generated)
+        BigDecimal amount = qrPayment.getAmount();
+        if (payer.getBalance().compareTo(amount) < 0) {
+            throw new IllegalStateException(
+                    "Payer's account no longer has sufficient balance.");
+        }
+
+        // 8️⃣  Move funds
+        payer.setBalance(payer.getBalance().subtract(amount));
+        collector.setBalance(collector.getBalance().add(amount));
+        accountRepository.save(payer);
+        accountRepository.save(collector);
+
+        // 9️⃣  Record transaction
+        String memo = qrPayment.getNote().substring("PAYER_QR:".length());
+        Transaction tx = Transaction.builder()
+                .fromAccount(payer)
+                .toAccount(collector)
+                .amount(amount)
+                .transactionType(TransactionType.PAYMENT)
+                .status(TransactionStatus.SUCCESS)
+                .note("Send-by-QR" + (memo.isEmpty() ? "" : " – " + memo))
+                .timestamp(LocalDateTime.now())
+                .transactionReference("QR-SEND-" + qrPayment.getQrCode().substring(0, 8).toUpperCase())
+                .build();
+        transactionRepository.save(tx);
+
+        // 🔟  Update QR record — swap payerAccount/payeeAccount for the response
+        qrPayment.setStatus(QrStatus.COMPLETED);
+        qrPayment.setPayerAccount(payer);
+        qrPayment.setTransaction(tx);
+        qrPayment.setPaidAt(LocalDateTime.now());
+        // Store collector in payeeAccount so the response shows correct direction
+        qrPayment.setPayeeAccount(collector);
+        qrPaymentRepository.save(qrPayment);
+
+        log.info("✅ Payer QR collected: qrCode={} payer={} collector={} amount={}",
+                request.qrCode(), payer.getAccountNumber(),
+                collector.getAccountNumber(), amount);
 
         return toResponse(qrPayment, null);
     }

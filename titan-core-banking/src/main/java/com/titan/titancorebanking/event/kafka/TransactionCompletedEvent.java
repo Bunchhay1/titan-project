@@ -12,101 +12,67 @@ import java.util.Map;
 
 /**
  * Kafka Event: Transaction Completed
- * 
+ *
  * Published to: banking.transactions.completed
- * Purpose: Notify auxiliary services (Promotions, Gifts, Notifications) of completed transactions
- * Pattern: Fire-and-forget (async, non-blocking)
- * 
- * @author Bro (The Architect)
- * @date 2026-02-12
+ *
+ * Schema is the authoritative contract between titan-core-banking (producer)
+ * and titan-notifications-service (consumer).  Do NOT add fields here without
+ * updating TransactionCompletedEvent in the notifications service as well.
+ *
+ * Field naming follows the notifications service mirror class:
+ *   - type              → TRANSFER | TRANSFER_RECEIVED | DEPOSIT | WITHDRAWAL
+ *   - sourceAccountNumber / targetAccountNumber  (not toAccountNumber)
+ *   - metadata          → Map<String,String> for senderName, receiverName, etc.
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class TransactionCompletedEvent {
-    
-    // ========== Event Metadata ==========
-    
-    /**
-     * Unique event identifier (UUID) for idempotency checks
-     */
+
+    // ── Event metadata ────────────────────────────────────────────────────
     private String eventId;
-    
-    /**
-     * Event type identifier
-     */
+
     @Builder.Default
     private String eventType = "TransactionCompleted";
-    
-    /**
-     * Event schema version for backward compatibility
-     */
+
     @Builder.Default
     private String eventVersion = "1.0";
-    
-    /**
-     * Event timestamp in ISO-8601 format
-     */
-    @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", timezone = "UTC")
+
+    @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Instant timestamp;
-    
-    /**
-     * Correlation ID for distributed tracing
-     */
+
     private String correlationId;
-    
-    // ========== Transaction Data ==========
-    
-    /**
-     * Transaction ID from database
-     */
-    private Long transactionId;
-    
-    /**
-     * Account ID involved in the transaction
-     */
-    private Long accountId;
-    
-    /**
-     * Transaction amount
-     */
+
+    // ── Transaction data ──────────────────────────────────────────────────
+    /** String form of the DB transaction ID (e.g. "28" or "28-recv" for receiver side) */
+    private String transactionId;
+
     private BigDecimal amount;
-    
-    /**
-     * Currency code (ISO 4217: USD, KHR, EUR, etc.)
-     */
     private String currency;
-    
+
     /**
-     * Transaction type (DEPOSIT, WITHDRAWAL, TRANSFER, etc.)
+     * Transaction type identifier.
+     * Values: TRANSFER, TRANSFER_RECEIVED, DEPOSIT, WITHDRAWAL
+     * (TRANSFER_RECEIVED = Account B / receiver perspective)
      */
-    private String transactionType;
-    
+    private String type;
+
+    private String status;  // SUCCESS, FAILED, BLOCKED
+
+    // ── Account info ──────────────────────────────────────────────────────
+    private String sourceAccountNumber;   // sender's account number
+    private String targetAccountNumber;   // receiver's account number
+
+    /** Username of the account owner this event is targeted at */
+    private String username;
+
+    // ── Optional ─────────────────────────────────────────────────────────
+    private String note;
+
     /**
-     * Transaction status (COMPLETED, FAILED, PENDING)
-     */
-    private String status;
-    
-    // ========== Optional Metadata ==========
-    
-    /**
-     * Transaction description/note
-     */
-    private String description;
-    
-    /**
-     * Additional metadata (channel, device, etc.)
+     * Rich metadata injected by EventPublisherService.
+     * Keys: senderName, receiverName, senderAccount, receiverAccount, userEmail, source, channel
      */
     private Map<String, String> metadata;
-    
-    /**
-     * Username of the account owner
-     */
-    private String username;
-    
-    /**
-     * Recipient account number (for transfers)
-     */
-    private String toAccountNumber;
 }

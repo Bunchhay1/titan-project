@@ -12,6 +12,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * Manages APNs device token registration and lookup.
+ *
+ * core-banking ONLY stores tokens — it does NOT send push notifications.
+ * All push notification delivery belongs in titan-notifications-service,
+ * which calls GET /api/v1/notifications/internal/device-tokens/{username}
+ * to fetch tokens and fires APNs pushes itself.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -19,11 +27,10 @@ public class DeviceTokenService {
 
     private final DeviceTokenRepository deviceTokenRepository;
     private final UserRepository userRepository;
-    private final ApnsPushService apnsPushService;
 
     /**
      * Save (or update) an APNs device token for the logged-in user.
-     * Called by the iOS app after login.
+     * Called by the iOS app after login via POST /api/v1/notifications/device-token.
      */
     @Transactional
     public void registerToken(String username, String token, String platform) {
@@ -49,16 +56,12 @@ public class DeviceTokenService {
     }
 
     /**
-     * Send a push notification to ALL devices registered for a user.
+     * Return all device tokens registered for a username.
+     * Used by the internal endpoint called by titan-notifications-service.
      */
-    public void pushToUser(Long userId, String title, String body) {
-        List<DeviceToken> tokens = deviceTokenRepository.findByUserId(userId);
-        if (tokens.isEmpty()) {
-            log.info("ℹ️ No device tokens for userId={} — skipping push", userId);
-            return;
-        }
-        for (DeviceToken dt : tokens) {
-            apnsPushService.sendPush(dt.getDeviceToken(), title, body);
-        }
+    public List<DeviceToken> getTokensForUsername(String username) {
+        return userRepository.findByUsername(username)
+                .map(user -> deviceTokenRepository.findByUserId(user.getId()))
+                .orElse(java.util.Collections.emptyList());
     }
 }

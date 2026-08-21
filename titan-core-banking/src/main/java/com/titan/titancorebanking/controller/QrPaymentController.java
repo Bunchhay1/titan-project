@@ -1,6 +1,8 @@
 package com.titan.titancorebanking.controller;
 
 import com.titan.titancorebanking.dto.request.GenerateQrRequest;
+import com.titan.titancorebanking.dto.request.GeneratePayerQrRequest;
+import com.titan.titancorebanking.dto.request.CollectByQrRequest;
 import com.titan.titancorebanking.dto.request.PayByQrRequest;
 import com.titan.titancorebanking.dto.response.QrPaymentResponse;
 import com.titan.titancorebanking.service.QrPaymentService;
@@ -97,6 +99,66 @@ public class QrPaymentController {
     ) {
         log.info("💳 QR Pay request: qrCode={} payer={}", request.qrCode(), request.payerAccountNumber());
         QrPaymentResponse response = qrPaymentService.payByQr(request, userDetails.getUsername());
+        return ResponseEntity.ok(response);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 3. GENERATE PAYER QR  (Send by QR)
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Account A generates a "Send by QR" code pre-authorised with their PIN.
+     * Account B scans it and calls /collect to receive the money.
+     *
+     * Example body:
+     * {
+     *   "payerAccountNumber": "1234567890",
+     *   "amount": 500.00,
+     *   "pin": "1234",
+     *   "note": "For you",
+     *   "ttlMinutes": 15
+     * }
+     */
+    @PostMapping("/generate-payer")
+    @Operation(
+        summary     = "Generate Send-by-QR Code",
+        description = "Payer pre-authorises a payment. " +
+                      "Anyone who scans this QR and calls /collect receives the money."
+    )
+    public ResponseEntity<QrPaymentResponse> generatePayerQr(
+            @Valid @RequestBody GeneratePayerQrRequest request,
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("💸 Generate Payer QR: account={} amount={}",
+                request.payerAccountNumber(), request.amount());
+        QrPaymentResponse response = qrPaymentService.generatePayerQr(request, userDetails.getUsername());
+        return ResponseEntity.ok(response);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 4. COLLECT BY QR
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Account B scans Account A's Send-by-QR code and collects the money.
+     *
+     * Example body:
+     * {
+     *   "qrCode": "abc123token...",
+     *   "collectorAccountNumber": "9876543210"
+     * }
+     */
+    @PostMapping("/collect")
+    @Operation(
+        summary     = "Collect money from a Send-by-QR code",
+        description = "Collector scans the payer's QR code and receives the pre-authorised amount."
+    )
+    public ResponseEntity<QrPaymentResponse> collectByQr(
+            @Valid @RequestBody CollectByQrRequest request,
+            @AuthenticationPrincipal UserDetails userDetails
+    ) {
+        log.info("📥 Collect QR: qrCode={} collector={}", request.qrCode(), request.collectorAccountNumber());
+        QrPaymentResponse response = qrPaymentService.collectByQr(request, userDetails.getUsername());
         return ResponseEntity.ok(response);
     }
 

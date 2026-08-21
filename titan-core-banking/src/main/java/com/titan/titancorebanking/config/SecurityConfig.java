@@ -40,6 +40,16 @@ public class SecurityConfig {
                             "/swagger-resources/**",
                             "/webjars/**"
                         ).permitAll()
+                        // Internal service-to-service endpoint: notification service fetches
+                        // device tokens to fire APNs pushes. Only reachable within the Docker
+                        // network — not exposed on the public gateway.
+                        .requestMatchers("/api/v1/notifications/internal/**").permitAll()
+                        // Internal endpoint called by titan-loans-service to deduct processing fees.
+                        // Only reachable within the Docker/K8s internal network.
+                        .requestMatchers("/api/v1/transactions/internal/**").permitAll()
+                        // Internal endpoint called by titan-loans-service to fetch account info by ID.
+                        // Only reachable within the Docker/K8s internal network.
+                        .requestMatchers("/api/v1/accounts/{id}").permitAll()
                         // ✅ QR Payment endpoints (/api/v1/qr/**) are intentionally NOT
                         // whitelisted here – they require a valid JWT token.
                         // Lock down everything else

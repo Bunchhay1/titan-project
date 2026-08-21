@@ -10,8 +10,11 @@ class CORSRequestHandler(SimpleHTTPRequestHandler):
         return super().end_headers()
 
 if __name__ == '__main__':
-    os.chdir('/Users/chhay/Documents/titan-project/titan-edge-ai')
-    server = HTTPServer(('localhost', 8096), CORSRequestHandler)
+    # Use /app when running in Docker (Render), fall back to script directory locally
+    base_dir = '/app' if os.path.exists('/app/index.html') else os.path.dirname(os.path.abspath(__file__))
+    os.chdir(base_dir)
+    port = int(os.environ.get('PORT', 8001))
+    server = HTTPServer(('0.0.0.0', port), CORSRequestHandler)
     print('=' * 80)
     print('🚀 Titan Edge AI Server Running')
     print('=' * 80)

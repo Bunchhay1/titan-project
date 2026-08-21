@@ -24,7 +24,7 @@ public class OutboxProcessor {
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
     
-    @Scheduled(fixedDelay = 5000)
+    @Scheduled(fixedDelay = 2000)  // Process every 2 seconds for fast reward delivery
     @Transactional("transactionManager")
     public void processPendingEvents() {
         List<PromotionOutbox> pending = outboxRepository.findByStatusOrderByCreatedAtAsc(PromotionOutbox.OutboxStatus.PENDING);

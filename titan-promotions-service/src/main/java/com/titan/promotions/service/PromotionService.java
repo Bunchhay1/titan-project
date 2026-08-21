@@ -37,13 +37,18 @@ public class PromotionService {
     private static final BigDecimal CASHBACK_THRESHOLD = new BigDecimal("100.00");
     private static final BigDecimal CASHBACK_PERCENTAGE = new BigDecimal("0.02");
     
-    @Transactional
+    @Transactional("transactionManager")
     public void evaluatePromotions(TransactionCompletedEvent event) {
         log.info("Evaluating promotions for transaction: {}", event.getTransactionId());
         if (event == null || event.getAmount() == null) {
             log.warn("Skipping promotion evaluation due to missing event or amount");
             return;
         }
+
+        // NOTE: Deposit Bonus (DEPOSIT_BONUS_JUL_AUG_2026) is handled exclusively by
+        // PromotionEvaluationService.evaluateTransaction() which is called BEFORE this method
+        // in TransactionEventConsumer. Do NOT call depositPromotionService.evaluateAndApply()
+        // here — it would fire a second reward for the same deposit (duplicate notification).
 
         // Task 5: Shadow rule evaluation
         shadowRuleEngine.evaluateShadowRule(999L, "#amount > 50", event, new BigDecimal("10.00"));
@@ -116,21 +121,27 @@ public class PromotionService {
 
     private boolean matchesChannel(TransactionCompletedEvent event, String channel) {
         if (channel == null || channel.isBlank()) return true;
-        Map<String, Object> metadata = event.getMetadata();
+        Map<String, String> metadata = event.getMetadata();
         if (metadata == null || metadata.isEmpty()) return false;
-        Object channelValue = metadata.get("channel");
-        return channelValue != null && channel.equalsIgnoreCase(channelValue.toString());
+        String channelValue = metadata.get("channel");
+        return channelValue != null && channel.equalsIgnoreCase(channelValue);
     }
 
     private String extractTenantId(TransactionCompletedEvent event) {
-        Map<String, Object> metadata = event.getMetadata();
-        return metadata != null ? (String) metadata.get("tenantId") : null;
+        Map<String, String> metadata = event.getMetadata();
+        return metadata != null ? metadata.get("tenantId") : null;
     }
 
     private void savePromotion(TransactionCompletedEvent event, String type, BigDecimal amount, String description) {
+        savePromotion(event, type, amount, description, null);
+    }
+
+    private void savePromotion(TransactionCompletedEvent event, String type, BigDecimal amount,
+                                String description, Long campaignId) {
         AppliedPromotion promotion = AppliedPromotion.builder()
-                .transactionId(event.getTransactionId())
-                .accountId(event.getAccountId())
+                .transactionId(parseTransactionId(event.getTransactionId()))
+                .accountId(event.getAccountId() != null ? event.getAccountId() : 0L)
+                .campaignId(campaignId != null ? campaignId : 0L)  // 0 = system/legacy promotion
                 .promotionType(type)
                 .promotionAmount(amount)
                 .appliedAt(LocalDateTime.now())
@@ -139,5 +150,15 @@ public class PromotionService {
 
         promotionRepository.save(promotion);
         log.info("Applied promotion [{}]: {} for transaction {}", type, amount, event.getTransactionId());
+    }
+
+    private Long parseTransactionId(String transactionId) {
+        if (transactionId == null || transactionId.isBlank()) return 0L;
+        try {
+            return Long.parseLong(transactionId.split("-")[0]);
+        } catch (NumberFormatException e) {
+            log.warn("Cannot parse transactionId '{}' as Long, using 0", transactionId);
+            return 0L;
+        }
     }
 }

@@ -27,11 +27,17 @@ public class AppliedPromotion {
     
     @Column(nullable = false)
     private Long transactionId;
-    
+
     @Column(nullable = false)
     private Long accountId;
-    
-    @Column(nullable = false)
+
+    /**
+     * References campaigns.id. Nullable for system/legacy promotions
+     * (REFERRAL_REWARD, CASHBACK, COIN_POINTS, MEMBER_DEPOSIT_BONUS)
+     * that are not tied to a specific campaign row.
+     * Sentinel value: 0L = system/legacy; null = unset.
+     */
+    @Column
     private Long campaignId;
     
     @Column(nullable = false, length = 50)

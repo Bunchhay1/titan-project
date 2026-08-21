@@ -55,9 +55,9 @@ public class EnhancedPromotionService {
         BigDecimal finalReward = personalizedRewardFuture.join();
         
         // Task 3: Fraud Defense - Check before granting high-value rewards
-        Map<String, Object> metadata = event.getMetadata();
-        String deviceFingerprint = metadata != null ? (String) metadata.get("deviceFingerprint") : null;
-        String ipAddress = metadata != null ? (String) metadata.get("ipAddress") : null;
+        Map<String, String> metadata = event.getMetadata();
+        String deviceFingerprint = metadata != null ? metadata.get("deviceFingerprint") : null;
+        String ipAddress = metadata != null ? metadata.get("ipAddress") : null;
         
         boolean shouldGrant = fraudDefenseService.shouldGrantReward(
             event.getAccountId(), deviceFingerprint, ipAddress, finalReward);
@@ -69,8 +69,8 @@ public class EnhancedPromotionService {
         
         // Save promotion
         AppliedPromotion promotion = AppliedPromotion.builder()
-            .transactionId(event.getTransactionId())
-            .accountId(event.getAccountId())
+            .transactionId(parseTransactionId(event.getTransactionId()))
+            .accountId(event.getAccountId() != null ? event.getAccountId() : 0L)
             .campaignId(campaignId)
             .promotionType("DYNAMIC_REWARD")
             .promotionAmount(finalReward)
@@ -93,4 +93,14 @@ public class EnhancedPromotionService {
     }
     
     public record RewardDispatchEvent(Long promotionId, Long accountId, BigDecimal amount) {}
+
+    private Long parseTransactionId(String transactionId) {
+        if (transactionId == null || transactionId.isBlank()) return 0L;
+        try {
+            return Long.parseLong(transactionId.split("-")[0]);
+        } catch (NumberFormatException e) {
+            log.warn("Cannot parse transactionId '{}' as Long, using 0", transactionId);
+            return 0L;
+        }
+    }
 }

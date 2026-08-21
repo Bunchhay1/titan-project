@@ -37,6 +37,14 @@ public class NotifyController {
      *
      * Request body: TransactionNotificationRequest JSON
      * Response:     200 OK immediately (processing happens async)
+     *
+     * TRANSFER handling — two notifications fired per transfer:
+     *   1. Sender event  (type=TRANSFER,          username=senderUsername)
+     *   2. Receiver event (type=TRANSFER_RECEIVED, username=receiverUsername)
+     *
+     * The receiver's username is read from metadata.receiverName (populated by
+     * titan-core-banking's EventPublisherService). If receiverName is absent in
+     * metadata the receiver notification is skipped gracefully.
      */
     @PostMapping("/transaction")
     public ResponseEntity<Map<String, String>> notifyTransaction(
@@ -46,12 +54,26 @@ public class NotifyController {
                 req.getTransactionId(), req.getType(), req.getAmount(), req.getUsername());
 
         // Convert HTTP payload → TransactionCompletedEvent (same model Kafka uses)
-        TransactionCompletedEvent event = toEvent(req);
+        TransactionCompletedEvent senderEvent = toEvent(req);
 
         // Process async so we respond instantly and don't block core-banking
         Thread.ofVirtual().name("notify-", 0).start(() -> {
             try {
-                notificationService.sendNotifications(event);
+                // ── 1. Sender notification ─────────────────────────────────────
+                notificationService.sendNotifications(senderEvent);
+
+                // ── 2. Receiver notification (TRANSFER only) ───────────────────
+                // When Kafka is disabled core-banking only calls this endpoint once
+                // (for the sender). We must fire the TRANSFER_RECEIVED event here
+                // so the receiver account also gets an in-app + push notification.
+                if ("TRANSFER".equalsIgnoreCase(req.getType())) {
+                    TransactionCompletedEvent receiverEvent = buildReceiverEvent(req);
+                    if (receiverEvent != null) {
+                        log.info("📨 Firing TRANSFER_RECEIVED for receiver: txId={}, receiver={}",
+                                req.getTransactionId(), receiverEvent.getUsername());
+                        notificationService.sendNotifications(receiverEvent);
+                    }
+                }
             } catch (Exception e) {
                 log.error("❌ Notification processing error: {}", e.getMessage(), e);
             }
@@ -95,6 +117,68 @@ public class NotifyController {
                 .locale(req.getLocale())
                 // Inject userEmail into metadata so NotificationService.resolveEmail() picks it up
                 .metadata(buildMetadata(req))
+                .build();
+    }
+
+    /**
+     * Build the receiver-side (TRANSFER_RECEIVED) event from the sender's request.
+     *
+     * Receiver info is sourced from:
+     *   - metadata.receiverName    → receiver's username   (set by core-banking EventPublisherService)
+     *   - metadata.receiverAccount → receiver's account number
+     *   - targetAccountNumber      → fallback if metadata keys are absent
+     *
+     * Returns null if receiver username cannot be determined (skips notification gracefully).
+     */
+    private TransactionCompletedEvent buildReceiverEvent(TransactionNotificationRequest req) {
+        java.util.Map<String, String> meta = req.getMetadata() != null
+                ? new java.util.HashMap<>(req.getMetadata()) : new java.util.HashMap<>();
+
+        // Resolve receiver username — prefer metadata.receiverName
+        String receiverUsername = meta.get("receiverName");
+        if (receiverUsername == null || receiverUsername.isBlank()) {
+            // Fall back to targetAccountNumber if no receiverName in metadata
+            receiverUsername = req.getTargetAccountNumber();
+        }
+        if (receiverUsername == null || receiverUsername.isBlank()) {
+            log.warn("⚠️ Cannot build TRANSFER_RECEIVED event — no receiver info in metadata for txId={}",
+                    req.getTransactionId());
+            return null;
+        }
+
+        // Ensure senderName is in metadata so the notification body reads
+        // "You received $X from <senderName>"
+        if (!meta.containsKey("senderName") && req.getUsername() != null) {
+            meta.put("senderName", req.getUsername());
+        }
+        if (!meta.containsKey("senderAccount") && req.getSourceAccountNumber() != null) {
+            meta.put("senderAccount", req.getSourceAccountNumber());
+        }
+        meta.put("transport", "http");
+        meta.put("source", "titan-core-banking");
+
+        // Receiver-side txId gets the "-recv" suffix so the dedup key is unique
+        // (same as Kafka path: "28-recv" vs "28")
+        String receiverTxId = req.getTransactionId() != null
+                ? req.getTransactionId() + "-recv"
+                : java.util.UUID.randomUUID().toString();
+
+        return TransactionCompletedEvent.builder()
+                .eventId(java.util.UUID.randomUUID().toString())
+                .eventType("TransactionCompleted")
+                .eventVersion("1.0")
+                .transactionId(receiverTxId)
+                .timestamp(java.time.Instant.now())
+                .amount(req.getAmount())
+                .currency(req.getCurrency())
+                .type("TRANSFER_RECEIVED")           // ← receiver-side type
+                .status(req.getStatus())
+                .sourceAccountNumber(req.getSourceAccountNumber())   // sender's account
+                .targetAccountNumber(req.getTargetAccountNumber())   // receiver's account
+                .username(receiverUsername.trim())   // ← receiver's username
+                .note(req.getNote())
+                .locale(req.getLocale())
+                .metadata(meta)
                 .build();
     }
 

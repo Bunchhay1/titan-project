@@ -217,6 +217,10 @@ public class AccountService {
     // Helper to keep code clean - add missing methods back if needed
     @Transactional(readOnly = true)
     public List<Account> getMyAccounts(String username) { return accountRepository.findByUserUsername(username); }
+
+    @Transactional(readOnly = true)
+    public java.util.Optional<Account> getAccountById(Long id) { return accountRepository.findById(id); }
+
     @Transactional(readOnly = true)
     public BigDecimal getBalance(String accountNumber) {
         return accountRepository.findByAccountNumber(accountNumber).map(Account::getBalance).orElse(BigDecimal.ZERO);

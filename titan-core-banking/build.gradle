@@ -129,10 +129,13 @@ protobuf {
     }
 }
 
-// ✅ 12. COMPILER BYPASS (Safety net for Lombok)
+// ✅ 12. COMPILER CONFIG (Lombok-compatible, Java 21)
+// NOTE: --add-opens is a JVM flag, NOT a javac flag.
+//       Passing it via compilerArgs causes "has no effect at compile time" warning
+//       and can cause the compiler to fail with 1 error. Use forkOptions.jvmArgs instead.
 tasks.withType(JavaCompile) {
     options.fork = true
-    options.compilerArgs += [
+    options.forkOptions.jvmArgs += [
             '--add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED',
             '--add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED',
             '--add-opens=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED',

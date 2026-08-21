@@ -1,16 +1,21 @@
 package com.titan.titancorebanking.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.titan.titancorebankingevent.service.TransactionCompletedEvent;
+import com.titan.titancorebanking.event.kafka.TransactionCompletedEvent;
 import com.titan.titancorebanking.model.Account;
 import com.titan.titancorebanking.model.OutboxEvent;
 import com.titan.titancorebanking.model.Transaction;
 import com.titan.titancorebanking.repository.OutboxRepository;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -18,63 +23,215 @@ import java.util.UUID;
 
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class EventPublisherService {
 
     private final OutboxRepository outboxRepository;
     private final ObjectMapper objectMapper;
 
     /**
+     * Whether Kafka is enabled. When false, notification events are sent directly
+     * via HTTP to the notification service instead of through the Outbox/Kafka path.
+     */
+    @Value("${kafka.enabled:false}")
+    private boolean kafkaEnabled;
+
+    /**
+     * URL of titan-notifications-service.
+     * Used only when kafkaEnabled=false (local dev / Render free tier).
+     * Defaults to localhost:8084 for local development.
+     */
+    @Value("${notification.service.url:http://localhost:8084}")
+    private String notificationServiceUrl;
+
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build();
+
+    public EventPublisherService(OutboxRepository outboxRepository, ObjectMapper objectMapper) {
+        this.outboxRepository = outboxRepository;
+        this.objectMapper = objectMapper;
+    }
+
+    /**
      * 🚀 Publish Transaction Event via Outbox Pattern
      * Guarantees atomicity: DB commit = Event guaranteed delivery
+     * For TRANSFER: saves TWO outbox events — sender (Account A) + receiver (Account B)
+     *
+     * When kafka.enabled=false (local dev / Render free tier without Confluent Cloud):
+     * the events are ALSO sent directly via HTTP to titan-notifications-service so that
+     * notifications are delivered even without Kafka/OutboxRelay running.
      */
     public void publishTransactionCompletedEvent(Transaction transaction) {
         try {
+            // ── Sender event (Account A) ──────────────────────────────────────
             TransactionCompletedEvent event = buildTransactionCompletedEvent(transaction);
             String payload = objectMapper.writeValueAsString(event);
-            
+
             OutboxEvent outbox = OutboxEvent.builder()
                 .aggregateId(transaction.getId().toString())
                 .aggregateType("Transaction")
                 .eventType("TransactionCompleted")
                 .payload(payload)
                 .build();
-            
+
             outboxRepository.save(outbox);
-            
-            log.info("✅ Event saved to outbox: TX ID: {}", transaction.getId());
-            
+            log.info("✅ Sender event saved to outbox: TX ID: {}", transaction.getId());
+
+            // ── Receiver event (Account B) — only for TRANSFER ────────────────
+            TransactionCompletedEvent receiverEvent = null;
+            if (transaction.getToAccount() != null && transaction.getFromAccount() != null
+                    && transaction.getTransactionType() != null
+                    && "TRANSFER".equalsIgnoreCase(transaction.getTransactionType().name())) {
+
+                receiverEvent = buildReceiverEvent(transaction);
+                String receiverPayload = objectMapper.writeValueAsString(receiverEvent);
+
+                OutboxEvent receiverOutbox = OutboxEvent.builder()
+                    .aggregateId(transaction.getId().toString() + "-recv")
+                    .aggregateType("Transaction")
+                    .eventType("TransactionCompleted")
+                    .payload(receiverPayload)
+                    .build();
+
+                outboxRepository.save(receiverOutbox);
+                log.info("✅ Receiver event saved to outbox: TX ID: {}-recv", transaction.getId());
+            }
+
+            // ── HTTP fallback — fire when Kafka/Outbox relay is not running ──────
+            // When kafka.enabled=false the OutboxRelayService bean is inactive, so
+            // the outbox records will never be forwarded to Kafka. We compensate by
+            // calling the notification service directly via HTTP (fire-and-forget).
+            if (!kafkaEnabled) {
+                final TransactionCompletedEvent senderEventFinal  = event;
+                final TransactionCompletedEvent receiverEventFinal = receiverEvent;
+
+                Thread.ofVirtual().name("notify-http-", 0).start(() -> {
+                    sendHttpNotification(senderEventFinal);
+                    if (receiverEventFinal != null) {
+                        sendHttpNotification(receiverEventFinal);
+                    }
+                });
+            }
+
         } catch (Exception e) {
             log.error("❌ Failed to save event to outbox: TX ID: {}", transaction.getId(), e);
             throw new RuntimeException("Failed to save event", e);
         }
     }
 
+    /**
+     * Build a TRANSFER_RECEIVED event for Account B (the receiver).
+     * username = receiver's username so the notification service
+     * writes the audit record under the correct user.
+     */
+    private TransactionCompletedEvent buildReceiverEvent(Transaction tx) {
+        Account receiver = tx.getToAccount();
+        Account sender   = tx.getFromAccount();
+
+        // ── TRIM: remove any accidental whitespace from usernames ─────────────
+        String receiverUsername = (receiver.getUser() != null && receiver.getUser().getUsername() != null)
+                ? receiver.getUser().getUsername().trim() : receiver.getAccountNumber().trim();
+        String senderUsername   = (sender.getUser() != null && sender.getUser().getUsername() != null)
+                ? sender.getUser().getUsername().trim() : sender.getAccountNumber().trim();
+        String receiverEmail    = (receiver.getUser() != null) ? receiver.getUser().getEmail() : null;
+
+        String currency      = receiver.getCurrency().name();
+        String correlationId = MDC.get("correlationId") != null
+                ? MDC.get("correlationId") : UUID.randomUUID().toString();
+
+        // ── Rich metadata — notification service uses these to build the alert ─
+        Map<String, String> metadata = new HashMap<>();
+        metadata.put("source",              "titan-core-banking");
+        metadata.put("channel",             "mobile-app");
+        metadata.put("senderName",          senderUsername);          // "navatra"
+        metadata.put("receiverName",        receiverUsername);        // "vanda"
+        metadata.put("senderAccount",       sender.getAccountNumber());
+        metadata.put("receiverAccount",     receiver.getAccountNumber());
+        // ── accountId: receiver (Account B) owns this event ──────────────
+        metadata.put("accountId",           String.valueOf(receiver.getId()));
+        if (receiverEmail != null && !receiverEmail.isBlank()) {
+            metadata.put("userEmail", receiverEmail);
+        }
+
+        return TransactionCompletedEvent.builder()
+                .eventId(UUID.randomUUID().toString())
+                .eventType("TransactionCompleted")
+                .transactionId(tx.getId().toString() + "-recv")
+                .timestamp(Instant.now())
+                .correlationId(correlationId)
+                .amount(tx.getAmount())
+                .currency(currency)
+                .type("TRANSFER_RECEIVED")          // ← tells notification service: this is Account B
+                .status(tx.getStatus().name())
+                .sourceAccountNumber(sender.getAccountNumber())
+                .targetAccountNumber(receiver.getAccountNumber())
+                .username(receiverUsername)          // ← Account B's trimmed username
+                .note(tx.getNote())
+                .metadata(metadata)
+                .build();
+    }
+
     private TransactionCompletedEvent buildTransactionCompletedEvent(Transaction tx) {
-        // ✅ SMART ACCOUNT DETECTION
-        Account primaryAccount = tx.getFromAccount() != null ? tx.getFromAccount() : tx.getToAccount();
+        // ── For DEPOSIT, fromAccount is null — the owning account is toAccount. ──
+        // For TRANSFER / WITHDRAWAL, fromAccount is the initiating account.
+        boolean isDeposit = tx.getFromAccount() == null && tx.getToAccount() != null;
 
-        String username = (primaryAccount != null && primaryAccount.getUser() != null)
-                ? primaryAccount.getUser().getUsername()
-                : "SYSTEM";
+        // Account that owns this event (= the user who should receive the notification)
+        Account ownerAccount   = isDeposit ? tx.getToAccount() : tx.getFromAccount();
+        Account receiverAccount = tx.getToAccount();
 
-        String currency = (primaryAccount != null)
-                ? primaryAccount.getCurrency().name()
+        // ── TRIM: remove any accidental whitespace from usernames ─────────────
+        String ownerUsername = (ownerAccount != null && ownerAccount.getUser() != null
+                && ownerAccount.getUser().getUsername() != null)
+                ? ownerAccount.getUser().getUsername().trim()
+                : (ownerAccount != null ? ownerAccount.getAccountNumber().trim() : "SYSTEM");
+
+        String receiverUsername = (receiverAccount != null && receiverAccount.getUser() != null
+                && receiverAccount.getUser().getUsername() != null)
+                ? receiverAccount.getUser().getUsername().trim()
+                : null;
+
+        String currency = (ownerAccount != null)
+                ? ownerAccount.getCurrency().name()
                 : "USD";
 
-        String correlationId = MDC.get("correlationId") != null ? MDC.get("correlationId") : UUID.randomUUID().toString();
+        String correlationId = MDC.get("correlationId") != null
+                ? MDC.get("correlationId") : UUID.randomUUID().toString();
 
-        // ── Build metadata — include user contact info so notification service
-        //    can send to the real email/phone without needing a separate DB lookup
+        // ── Rich metadata — notification service uses these to build the alert ─
         Map<String, String> metadata = new HashMap<>();
-        metadata.put("source", "titan-core-banking");
-        metadata.put("channel", "mobile-app");
+        metadata.put("source",          "titan-core-banking");
+        metadata.put("channel",         "mobile-app");
 
-        // Inject user email so NotificationService.resolveEmail() can use it
-        if (primaryAccount != null && primaryAccount.getUser() != null) {
-            String email = primaryAccount.getUser().getEmail();
-            if (email != null && !email.isBlank()) {
-                metadata.put("userEmail", email);
+        if (isDeposit) {
+            // DEPOSIT: ownerAccount is the deposit target (toAccount)
+            metadata.put("receiverName",    ownerUsername);
+            metadata.put("receiverAccount", ownerAccount.getAccountNumber());
+            metadata.put("accountId",       String.valueOf(ownerAccount.getId()));
+            if (ownerAccount.getUser() != null) {
+                String email = ownerAccount.getUser().getEmail();
+                if (email != null && !email.isBlank()) {
+                    metadata.put("userEmail", email);
+                }
+            }
+        } else {
+            // TRANSFER / WITHDRAWAL: ownerAccount is fromAccount (the sender)
+            metadata.put("senderName",      ownerUsername);
+            metadata.put("senderAccount",   ownerAccount != null ? ownerAccount.getAccountNumber() : "");
+            if (receiverUsername != null) {
+                metadata.put("receiverName",    receiverUsername);
+            }
+            if (receiverAccount != null) {
+                metadata.put("receiverAccount", receiverAccount.getAccountNumber());
+            }
+            if (ownerAccount != null) {
+                metadata.put("accountId", String.valueOf(ownerAccount.getId()));
+                if (ownerAccount.getUser() != null) {
+                    String email = ownerAccount.getUser().getEmail();
+                    if (email != null && !email.isBlank()) {
+                        metadata.put("userEmail", email);
+                    }
+                }
             }
         }
 
@@ -88,11 +245,53 @@ public class EventPublisherService {
                 .currency(currency)
                 .type(tx.getTransactionType().name())
                 .status(tx.getStatus().name())
+                // sourceAccountNumber = sender (null for DEPOSIT — that's correct)
                 .sourceAccountNumber(tx.getFromAccount() != null ? tx.getFromAccount().getAccountNumber() : null)
+                // targetAccountNumber = destination account (always the deposit/receiver account)
                 .targetAccountNumber(tx.getToAccount() != null ? tx.getToAccount().getAccountNumber() : null)
-                .username(username)
+                // username = the account owner who should receive this notification
+                .username(ownerUsername)
                 .note(tx.getNote())
                 .metadata(metadata)
                 .build();
+    }
+
+    // =========================================================================
+    // HTTP FALLBACK — used when kafka.enabled=false
+    // =========================================================================
+
+    /**
+     * Fire-and-forget HTTP POST to titan-notifications-service.
+     *
+     * Called from a virtual thread so it never blocks the transaction commit.
+     * Failures are logged as warnings — a notification failure must never
+     * roll back the financial transaction.
+     */
+    private void sendHttpNotification(TransactionCompletedEvent event) {
+        try {
+            String url = notificationServiceUrl + "/api/notify/transaction";
+            String json = objectMapper.writeValueAsString(event);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(url))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(json))
+                    .timeout(Duration.ofSeconds(5))
+                    .build();
+
+            HttpResponse<String> response =
+                    httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            if (response.statusCode() == 200) {
+                log.info("📢 [HTTP] Notification accepted by notification service: txId={} type={}",
+                        event.getTransactionId(), event.getType());
+            } else {
+                log.warn("⚠️ [HTTP] Notification service returned {}: txId={} body={}",
+                        response.statusCode(), event.getTransactionId(), response.body());
+            }
+        } catch (Exception e) {
+            // Log and swallow — notification failure must NOT affect the transaction
+            log.warn("⚠️ [HTTP] Failed to notify for txId={}: {}", event.getTransactionId(), e.getMessage());
+        }
     }
 }

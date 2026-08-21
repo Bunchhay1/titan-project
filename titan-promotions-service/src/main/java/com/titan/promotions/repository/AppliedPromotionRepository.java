@@ -15,5 +15,8 @@ public interface AppliedPromotionRepository extends JpaRepository<AppliedPromoti
     List<AppliedPromotion> findByTransactionId(Long transactionId);
     
     Optional<AppliedPromotion> findByRewardEventId(String rewardEventId);
+
+    /** Check if an account has already received a specific campaign reward (one-time guard) */
+    boolean existsByAccountIdAndPromotionType(Long accountId, String promotionType);
 }
 
